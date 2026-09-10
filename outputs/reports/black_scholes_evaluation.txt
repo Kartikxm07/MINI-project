@@ -1,0 +1,68 @@
+==============================================================================
+OBJECTIVE 1 -- CLASSICAL BLACK-SCHOLES: PRICING EVALUATION
+==============================================================================
+
+Model  : standard Black-Scholes-Merton, no dividends (q = 0)
+Target : market_price (bid-ask midpoint)
+sigma  : VIX close converted to decimal volatility (VIX / 100)
+r      : maturity-matched risk-free rate (decimal, used as-is)
+Data   : trading date(s) 2023-08-25 -> 2023-08-25
+Total observations priced: 5829
+
+Metric key: Bias = mean(BS - market); >0 means BS overprices.
+            MdAPE = median abs % error (robust to deep-OTM blow-up).
+
+------------------------------------------------------------------------------
+1. OVERALL (all observations)
+------------------------------------------------------------------------------
+group    N     RMSE      MAE     Bias     MAPE    MdAPE      R2
+  ALL 5829  14.6996  10.0834   8.6111  111.44%   32.37%  0.9401
+
+------------------------------------------------------------------------------
+2. BY SPLIT x OPTION TYPE
+------------------------------------------------------------------------------
+       group    N     RMSE      MAE     Bias     MAPE    MdAPE      R2
+train | CALL 2169  15.1354  10.8654  10.1488  205.23%   58.94%  0.9457
+ train | PUT 2493   8.5929   5.5129   3.7863   38.79%   29.09%  0.9671
+ test | CALL  543  28.9920  26.6768  26.6620  175.34%   59.74%  0.8636
+  test | PUT  624  13.9917  11.1860   6.8340   20.02%   18.33%  0.9183
+
+------------------------------------------------------------------------------
+3. BY OPTION TYPE x MONEYNESS CATEGORY (all data)
+------------------------------------------------------------------------------
+     group    N     RMSE      MAE     Bias     MAPE    MdAPE      R2
+CALL | OTM  766  22.8628  17.3556  16.7414  499.61%  391.45% -0.9222
+CALL | ATM 1599  18.4487  14.7912  14.4135   97.60%   39.81%  0.8735
+CALL | ITM  347   4.9963   3.1906   1.7842    4.64%    1.64%  0.9983
+ PUT | OTM  234  13.0869   7.7802   5.3077    8.61%    3.39%  0.9832
+ PUT | ATM 1612  12.2506   9.6076   9.2222   35.73%   24.09%  0.9118
+ PUT | ITM 1271   4.3669   2.6874  -1.8918   39.02%   31.29%  0.9367
+
+------------------------------------------------------------------------------
+4. TEST SET ONLY (out-of-sample) BY OPTION TYPE x MONEYNESS
+------------------------------------------------------------------------------
+     group   N     RMSE      MAE     Bias     MAPE    MdAPE      R2
+CALL | OTM 227  31.3577  28.7641  28.7641  372.43%  255.17% -1.3443
+CALL | ATM 280  28.7256  27.5941  27.5941   37.75%   29.82%  0.6732
+CALL | ITM  36   7.7399   6.3805   6.1570    2.79%    2.58%  0.9904
+ PUT | OTM  25  25.3653  24.0261  24.0261   13.47%   15.62%  0.8783
+ PUT | ATM 315  17.2912  15.6853  15.6801   18.39%   19.45%  0.7105
+ PUT | ITM 284   6.4716   5.0652  -4.4910   22.40%   18.18%  0.8744
+
+------------------------------------------------------------------------------
+5. NORMALISED SCALE: price / K  (overall, by option type)
+------------------------------------------------------------------------------
+group    N       RMSE        MAE       Bias     MAPE    MdAPE      R2
+ CALL 2712   0.008489   0.005103   0.002714  199.25%   59.43%  0.8644
+  PUT 3117   0.007092   0.002851   0.000141   35.04%   24.47%  0.8136
+
+------------------------------------------------------------------------------
+NOTES
+------------------------------------------------------------------------------
+- MAPE is inflated by deep out-of-the-money options whose market price
+  is near the $0.125 floor; a small $ error is a large % error there.
+  MdAPE and RMSE give a more stable picture of typical accuracy.
+- A single flat VIX volatility is used for every strike/maturity, so
+  Black-Scholes cannot capture the volatility smile; systematic error
+  across moneyness categories is expected and is the motivation for the
+  downstream hybrid neural-network correction.
