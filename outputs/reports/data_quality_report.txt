@@ -1,0 +1,95 @@
+======================================================================
+DATA QUALITY REPORT
+======================================================================
+
+======================================================================
+STEP 9 -- DATA INTEGRATION
+======================================================================
+Options cleaned rows  : 5829
+VIX cleaned rows      : 9266
+Yield curve rows      : 8507
+
+Merging sigma (prev-day VIX) onto options by date ...
+  Rows after VIX sigma merge  : 5829  (dropped 0 with no sigma)
+
+Assigning interpolated risk-free rate r ...
+  Rows after r assignment     : 5829  (dropped 0 with no r)
+
+======================================================================
+STEP 10 -- FINAL DATA VALIDATION
+======================================================================
+  Missing S                        : 0
+  Missing strike                   : 0
+  Missing T                        : 0
+  Missing sigma                    : 0
+  Missing r                        : 0
+  Missing market_price             : 0
+  Missing moneyness                : 0
+  [PASS] S > 0
+  [PASS] strike > 0
+  [PASS] T > 0
+  [PASS] sigma >= 0
+  [PASS] market_price > 0
+  [PASS] 0.90 <= moneyness <= 1.10
+  [PASS] bid >= 0
+  [PASS] ask >= 0
+  [PASS] ask >= bid
+  [PASS] option_type in CALL/PUT
+  [PASS] moneyness_category in OTM/ATM/ITM
+
+Final integrated dataset rows: 5829  (dropped 0 missing model inputs)
+
+Call observations : 2712
+Put  observations : 3117
+
+Call train : 2169 rows  [2023-08-25 -> 2023-08-25]
+Call test  : 543  rows  [2023-08-25  -> 2023-08-25]
+Put  train : 2493 rows  [2023-08-25 -> 2023-08-25]
+Put  test  : 624  rows  [2023-08-25  -> 2023-08-25]
+
+======================================================================
+STEP 29 -- FINAL SANITY CHECK
+======================================================================
+1. Final dataset shape        : (5829, 17)
+2. Number of Call observations: 2712
+3. Number of Put observations : 3117
+4. OTM/ATM/ITM distribution:
+     ATM: 3211
+     ITM: 1618
+     OTM: 1000
+5. Full date range            : 2023-08-25 -> 2023-08-25
+6. Call train date range      : 2023-08-25 -> 2023-08-25
+7. Call test date range       : 2023-08-25 -> 2023-08-25
+8. Missing values in final:
+S               0
+strike          0
+T               0
+sigma           0
+r               0
+market_price    0
+moneyness       0
+9. Numerical summary:
+                 S       strike            T         sigma            r  market_price    moneyness
+count  5829.000000  5829.000000  5829.000000  5.829000e+03  5829.000000   5829.000000  5829.000000
+mean   3302.491103  3286.721623     0.092558  1.720000e+01     0.055611     43.068730     1.006629
+std    1792.765417  1790.827328     0.083711  3.553018e-15     0.000159     60.070459     0.040742
+min     238.330000   216.670000     0.008219  1.720000e+01     0.055340      0.125000     0.900797
+25%     440.790000   457.000000     0.032877  1.720000e+01     0.055600      4.370000     0.979533
+50%    4413.905000  4305.000000     0.057534  1.720000e+01     0.055600     17.900000     1.004301
+75%    4413.905000  4460.000000     0.153425  1.720000e+01     0.055600     58.850000     1.033701
+max    4413.905000  4900.000000     0.306849  1.720000e+01     0.056061    483.800000     1.099968
+10. Observations removed at each stage:
+    B_after_vix_merge: 5829  (removed 0)
+    C_after_yield_merge: 5829  (removed 0)
+    D_final_integrated_rows: 5829  (removed 0)
+    E_call_count: 2712  (removed 3117)
+    F_put_count: 3117  (removed 0)
+    G_call_train: 2169  (removed 948)
+    H_call_test: 543  (removed 1626)
+    I_put_train: 2493  (removed 0)
+    J_put_test: 624  (removed 1869)
+
+[OK] Saved: C:\Mini Project\MINI-project\src\preprocessing\..\..\data\processed\final\train\call_train.csv
+[OK] Saved: C:\Mini Project\MINI-project\src\preprocessing\..\..\data\processed\final\train\put_train.csv
+[OK] Saved: C:\Mini Project\MINI-project\src\preprocessing\..\..\data\processed\final\test\call_test.csv
+[OK] Saved: C:\Mini Project\MINI-project\src\preprocessing\..\..\data\processed\final\test\put_test.csv
