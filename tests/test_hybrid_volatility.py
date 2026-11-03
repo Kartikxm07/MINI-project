@@ -9,7 +9,8 @@ import numpy as np
 import torch
 
 from src.pricing import black_scholes_call
-from model import VolatilityNet, black_scholes_call_torch
+from model import (VolatilityNet, black_scholes_call_torch,
+                   HybridShvimerSubModel1, HybridShvimerSubModel2)
 
 
 class TestDifferentiableBlackScholes(unittest.TestCase):
@@ -101,6 +102,23 @@ class TestVolatilityNet(unittest.TestCase):
 
         self.assertLess(end, start * 0.5)      # error at least halved
         self.assertAlmostEqual(mean_sigma, 0.35, delta=0.05)  # recovered true vol
+
+
+class TestShvimerHybrids(unittest.TestCase):
+    def test_submodel1_shape(self):
+        m = HybridShvimerSubModel1(input_dim=5)
+        out = m(torch.randn(10, 5))
+        self.assertEqual(out.shape, (10, 1))
+        self.assertTrue(torch.isfinite(out).all())
+
+    def test_submodel2_fuses_bs_price(self):
+        m = HybridShvimerSubModel2(input_dim=4)
+        x = torch.randn(10, 4)
+        c_bs = torch.rand(10, 1)
+        out = m(x, c_bs)
+        self.assertEqual(out.shape, (10, 1))
+        out.pow(2).mean().backward()
+        self.assertTrue(torch.isfinite(out).all())
 
 
 if __name__ == '__main__':

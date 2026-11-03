@@ -72,10 +72,23 @@ class TestFusionModels(unittest.TestCase):
         with self.assertRaises(ValueError):
             build_model("bogus", 4, 8)
 
+    def test_patch_coattention_forward_backward(self):
+        from src.attention.patch_coattn import PatchCoAttentionNet
+        m = PatchCoAttentionNet(price_dim=3, news_dim=32, d_model=32, num_heads=4,
+                                patch_len=4, stride=2)
+        price = torch.randn(6, 20, 3)
+        news = torch.randn(6, 5, 32)
+        mask = torch.ones(6, 5, dtype=torch.bool)
+        mask[0] = False                                  # a no-news sample must not NaN
+        out = m(price, news, mask)
+        self.assertEqual(out.shape, (6, 1))
+        out.pow(2).mean().backward()
+        self.assertTrue(torch.isfinite(out).all())
+
 
 class TestNewsLayer(unittest.TestCase):
     def test_provider_selection_defaults_to_yfinance(self):
-        for var in ("FINNHUB_API_KEY", "ALPHAVANTAGE_API_KEY"):
+        for var in ("FINNHUB_API_KEY", "ALPHAVANTAGE_API_KEY", "MARKETAUX_API_KEY"):
             os.environ.pop(var, None)
         self.assertIsInstance(get_provider(), YFinanceNewsProvider)
 

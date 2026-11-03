@@ -119,6 +119,72 @@ The synthetic news modes generate signal *by construction* to validate the
 architecture and the comparison; they are demonstrations, not evidence that real
 news improves real forecasts.
 
+## Real market data (replacing the synthetic datasets)
+
+The objectives can be run on **real observed market data**, not just synthetic:
+
+- **Real NSE option contracts** (`src/real_options.py`, `train_real_options.py`):
+  downloads NSE's official end-of-day **F&O Bhavcopy** via `jugaad-data` and
+  builds a clean call-option dataset (real spot, strikes, settlement prices,
+  liquidity-filtered). `train_real_options.py` runs Objectives 1–4 against these
+  **observed market prices**.
+
+  ```powershell
+  python train_real_options.py --symbol RELIANCE --days-back 18 --epochs 40
+  python train_real_options.py --symbol NIFTY    --days-back 12 --epochs 40
+  ```
+
+  Honest findings on real data: on **RELIANCE** stock options the **DL-Vol Hybrid**
+  (Obj 2 & 3) beats Black–Scholes (e.g. RMSE ₹9.7 vs ₹12.1, R² 0.95 vs 0.93); on
+  the highly-liquid **NIFTY index**, Black–Scholes with historical vol is already
+  near-perfect (R² ≈ 0.995) and the ML models do not beat it. So deep learning
+  helps where there is exploitable smile structure BS misses, less so for liquid
+  indices. Caveats: Bhavcopy is end-of-day *settlement* data (not live bid/ask),
+  the split is largely cross-sectional over a few recent days, and the risk-free
+  rate is a constant assumption.
+
+- **Real Indian stock prices**: yfinance `.NS` symbols (e.g. `RELIANCE.NS`) work
+  out of the box in `train_stock_news.py` (omit `--synthetic-prices`).
+
+- **Real Indian news**: the **Marketaux** provider (`--provider marketaux`) covers
+  NSE/BSE names with sentiment; set `MARKETAUX_API_KEY` in `.env` (free tier, so
+  coverage is sparse). US news uses Finnhub.
+
+Not freely available here: **NSE option chains with live bid/ask** (only Bhavcopy
+settlement data) and deep historical **Indian news** (Marketaux free tier is thin).
+Real US option *chains* are available via yfinance (`AAPL`, `SPY`) if US focus is
+preferred.
+
+## Faithful reference-paper implementations
+
+Two papers are reproduced directly:
+
+- **Shvimer & Zhu (2024), "Pricing options with a new hybrid neural network model"**
+  — the BS + NN hybrid. `model.py` implements both sub-models exactly:
+  `HybridShvimerSubModel1` (one FC net over `[features, C_BS]`, two 40-unit sigmoid
+  layers, 10% dropout, linear output) and `HybridShvimerSubModel2` (a non-parametric
+  branch φ then fused with `C_BS` in a final layer, Eq. 8). Both are trained and
+  compared against Black–Scholes in `train_real_options.py` on real NSE contracts.
+  Note: the paper trained on ~1.5M SPX options; on our few-thousand-contract real
+  samples these sigmoid hybrids underfit and do not beat BS, whereas the DL-Vol
+  Hybrid does — an honest small-data caveat.
+
+- **Zhang et al. (2026), "Integrative stock price trend prediction … patch-based
+  transformer with co-attention"** — `src/attention/patch_coattn.py`
+  (`PatchCoAttentionNet`) implements the pipeline: cross-attention alignment
+  (price=Query, text=Key/Value) → overlapping **patch** partitioning + per-stream
+  self-attention → **bidirectional co-attention fusion** (text↔price, concat,
+  linear, residual+LayerNorm, FFN) → up/down **classification**. `train_stock_patch.py`
+  trains it and reports **directional accuracy and MCC** (the paper's metrics),
+  against a news-ablated baseline.
+
+  ```powershell
+  python train_stock_patch.py --symbol RELIANCE.NS --news-mode auto --provider marketaux --embedder finbert
+  ```
+
+  (In place of the paper's hierarchical-LLM daily summary we use FinBERT/Marketaux
+  headline embeddings; the attention architecture is reproduced faithfully.)
+
 ## Files
 
 | File | Purpose |
@@ -132,8 +198,10 @@ news improves real forecasts.
 | `src/pricing.py` | Black-Scholes call/put prices, Greeks, implied volatility |
 | `src/data_loader.py` | Synthetic contracts and simulated price sequences |
 | `deep_learning_option_models.ipynb` | Runs the option pricing experiment |
-| `src/news/` | News providers, FinBERT/hashing embeddings, date-alignment and synthetic news |
-| `src/attention/` | Cross-attention & co-attention modules, fusion models, shared trainer |
+| `src/news/` | News providers (Finnhub, Alpha Vantage, Marketaux, yfinance), FinBERT/hashing embeddings, alignment, synthetic news |
+| `src/attention/` | Cross-attention & co-attention modules, fusion models (incl. `cocross`), shared trainer |
+| `src/real_options.py`, `train_real_options.py` | Real NSE option data (F&O Bhavcopy); Objectives 1–4 + Shvimer sub-models (PDF 2) on real prices |
+| `src/attention/patch_coattn.py`, `train_stock_patch.py` | PDF 1: patch-based cross/co-attention up/down classifier (accuracy, MCC) |
 | `train_stock_news.py` | Task A: stock-return prediction with news cross/co-attention |
 | `train_option_news.py` | Task B: option pricing with news cross/co-attention |
 | `tune_news.py` | Optuna hyperparameter tuning for the fusion models |

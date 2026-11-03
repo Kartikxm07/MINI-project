@@ -11,3 +11,4 @@ joblib
 transformers
 huggingface_hub
 optuna
+jugaad-data

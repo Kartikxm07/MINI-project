@@ -154,6 +154,37 @@ class HybridShvimerSubModel1(nn.Module):
         return self.net(x)
 
 
+class HybridShvimerSubModel2(nn.Module):
+    """
+    Sub-model 2 of Shvimer & Zhu (2024): the non-parametric price and Black-Scholes
+    are learned separately and hybridised only in the final layer.
+
+        phi = NN(S/K, r, sigma, T)                      # non-parametric price
+        C_H2 = W5 * sigmoid(W4,1 * phi + W4,2 * C_BS + b4) + b5   # Eq. (8)
+
+    The non-parametric branch mirrors Sub-model 1 (two 40-unit sigmoid layers with
+    10% dropout); a small fusion head then combines phi with the (scaled) BS price.
+    Inputs/targets are strike-normalised, consistent with the rest of the pipeline.
+    """
+    def __init__(self, input_dim: int = 4, hidden: int = 40, fuse_hidden: int = 40):
+        super().__init__()
+        self.nonparam = nn.Sequential(
+            nn.Linear(input_dim, hidden), nn.Sigmoid(), nn.Dropout(0.10),
+            nn.Linear(hidden, hidden), nn.Sigmoid(), nn.Dropout(0.10),
+            nn.Linear(hidden, 1),
+        )
+        self.fuse = nn.Sequential(
+            nn.Linear(2, fuse_hidden), nn.Sigmoid(), nn.Linear(fuse_hidden, 1),
+        )
+
+    def forward(self, x: torch.Tensor, c_bs: torch.Tensor) -> torch.Tensor:
+        """x: non-parametric features (B, input_dim); c_bs: scaled BS price (B, 1)."""
+        phi = self.nonparam(x)
+        if c_bs.ndim == 1:
+            c_bs = c_bs.unsqueeze(-1)
+        return self.fuse(torch.cat([phi, c_bs], dim=-1))
+
+
 def black_scholes_call_torch(S, K, T, r, sigma, eps_T: float = 1e-6, eps_sigma: float = 1e-6):
     """
     Differentiable Black-Scholes European call price in PyTorch.

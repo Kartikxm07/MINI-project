@@ -190,10 +190,63 @@ class AlphaVantageNewsProvider(NewsProvider):
         return items
 
 
+class MarketauxNewsProvider(NewsProvider):
+    """
+    Marketaux news (https://marketaux.com) -- covers Indian (NSE/BSE) markets with
+    entity tagging and sentiment. Set ``MARKETAUX_API_KEY`` (free tier ~100 req/day,
+    a few articles per request). Pass the symbol as e.g. ``RELIANCE.NS``.
+    """
+    name = "marketaux"
+
+    def __init__(self, api_key=None, max_pages: int = 20):
+        self.api_key = api_key or os.environ.get("MARKETAUX_API_KEY", "")
+        self.max_pages = max_pages
+
+    def fetch(self, symbol, start, end):
+        if not self.api_key:
+            return []
+        start_d, end_d = self._as_date(start), self._as_date(end)
+        items, page = [], 1
+        while page <= self.max_pages:
+            params = urllib.parse.urlencode({
+                "symbols": symbol,
+                "filter_entities": "true",
+                "language": "en",
+                "published_after": start_d.strftime("%Y-%m-%dT00:00"),
+                "published_before": end_d.strftime("%Y-%m-%dT23:59"),
+                "page": page,
+                "api_token": self.api_key,
+            })
+            try:
+                data = _http_get_json(f"https://api.marketaux.com/v1/news/all?{params}")
+            except Exception:
+                break
+            batch = (data or {}).get("data", [])
+            if not batch:
+                break
+            for entry in batch:
+                title = entry.get("title")
+                ts = entry.get("published_at")
+                if not title or not ts:
+                    continue
+                try:
+                    d = pd.to_datetime(ts).date()
+                except Exception:
+                    continue
+                items.append(NewsItem(d, str(title), self.name))
+            meta = (data or {}).get("meta", {})
+            if page * int(meta.get("returned", len(batch)) or len(batch)) >= int(meta.get("found", 0) or 0):
+                break
+            page += 1
+            time.sleep(0.3)
+        return items
+
+
 _PROVIDERS = {
     "yfinance": YFinanceNewsProvider,
     "finnhub": FinnhubNewsProvider,
     "alphavantage": AlphaVantageNewsProvider,
+    "marketaux": MarketauxNewsProvider,
 }
 
 
@@ -207,6 +260,8 @@ def get_provider(name: str = None) -> NewsProvider:
             name = "finnhub"
         elif os.environ.get("ALPHAVANTAGE_API_KEY"):
             name = "alphavantage"
+        elif os.environ.get("MARKETAUX_API_KEY"):
+            name = "marketaux"
         else:
             name = "yfinance"
     key = name.lower()

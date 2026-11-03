@@ -16,6 +16,9 @@ __pycache__/
 # Generated training results and runtime logs
 /outputs/
 
+# Downloaded market data (NSE bhavcopy, caches) - regenerable, not committed
+/data/real/
+
 # Local screenshots and reference material
 /image.png
 /interface.png
