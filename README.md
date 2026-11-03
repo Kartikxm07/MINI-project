@@ -2,6 +2,111 @@
 
 StockSight combines Indian stock forecasting with stock-specific European call pricing comparisons. The search page runs TensorFlow LSTM/GRU stock forecasts and a separate PyTorch option comparison for the searched symbol. The original synthetic benchmark remains available at `/options`.
 
+## Results & experiments
+
+The full, executed results are in **[`results.ipynb`](results.ipynb)** (real market data only).
+This section summarises what was built and the numbers obtained.
+
+### What was implemented
+
+- **Objectives 1–4 (option pricing):** classical **Black–Scholes** (Obj 1), a **deep-learning
+  volatility** model σ_DL (Obj 2) feeding a differentiable BS **hybrid** (Obj 3), and **residual
+  learning** C = C_BS + Ê (Obj 4). Plus a Direct ANN and an Option LSTM.
+- **Reference papers reproduced:** Shvimer & Zhu (2024) hybrid option-pricing **sub-models 1 & 2**;
+  Zhang et al. (2026) **patch-based cross/co-attention** stock-movement classifier.
+- **News + numerical fusion:** **cross-attention**, **co-attention**, and **co+cross** attention
+  over news-headline (FinBERT) embeddings and price features.
+- **Real data pipelines:** real **NSE option contracts** (F&O Bhavcopy via `jugaad-data`), real
+  Indian/US **stock prices** (yfinance), and real **news** (Marketaux for NSE/BSE, Finnhub for US),
+  plus **Optuna** hyperparameter tuning.
+
+### Datasets (all real)
+
+| Dataset | Source | Size (example) |
+| --- | --- | --- |
+| NSE option contracts | NSE F&O Bhavcopy (`jugaad-data`) | NIFTY 5,361 · RELIANCE 1,267 calls |
+| Stock prices | yfinance (`RELIANCE.NS`, `AAPL`) | 1–2 years daily OHLCV |
+| Financial news | Marketaux (India) · Finnhub (US) | AAPL 2,682 headlines (FinBERT) |
+
+### 1. Objectives 1–4 on real NSE options (held-out test)
+
+**RELIANCE stock options** — the DL-Vol Hybrid (Obj 2 & 3) beats Black–Scholes:
+
+| Model | RMSE (₹) | MAE (₹) | R² |
+| --- | --- | --- | --- |
+| **DL-Vol Hybrid (Obj 2 & 3)** | **10.71** | **8.24** | **0.943** |
+| Classical Black–Scholes (Obj 1) | 12.08 | 8.27 | 0.927 |
+| Shvimer Sub-model 2 (PDF 2) | 12.84 | 7.57 | 0.918 |
+| Shvimer Sub-model 1 (PDF 2) | 18.60 | 8.71 | 0.827 |
+| Residual ANN (Obj 4) | 27.29 | 14.38 | 0.627 |
+| Direct ANN | 79.48 | 41.19 | −2.16 |
+
+**NIFTY index options** — Black–Scholes is near-perfect, ML does not beat it:
+
+| Model | RMSE (₹) | MAE (₹) | R² |
+| --- | --- | --- | --- |
+| **Classical Black–Scholes** | **37.23** | **23.58** | **0.995** |
+| Shvimer Sub-model 2 (PDF 2) | 44.25 | 32.11 | 0.993 |
+| Residual ANN (Obj 4) | 55.62 | 41.34 | 0.989 |
+| Shvimer Sub-model 1 (PDF 2) | 69.26 | 56.19 | 0.983 |
+| DL-Vol Hybrid (Obj 2 & 3) | 88.33 | 55.48 | 0.972 |
+| Direct ANN | 104.11 | 63.86 | 0.961 |
+
+**Objective 2 diagnostic** (predicted vol vs market-implied vol, RMSE): on real data the historical
+vol already tracks implied vol closely (NIFTY 0.038, RELIANCE 0.098), so the price-optimised DL vol
+does not improve that specific metric (NIFTY 0.062, RELIANCE 0.138) even though it lowers pricing
+error on RELIANCE.
+
+### 2. Stock-movement prediction with real news (Task A)
+
+Next-day return; compares numeric-only vs attention-fused models (RMSE, directional accuracy).
+
+**AAPL — real Finnhub news (2,682 headlines, better coverage):**
+
+| Model | RMSE | DirAcc |
+| --- | --- | --- |
+| **Co+Cross-Attention (news)** | **0.0116** | 0.514 |
+| Cross-Attention (news) | 0.0145 | **0.571** |
+| Numeric-only (no news) | 0.0154 | 0.543 |
+| Co-Attention (news) | 0.0186 | 0.543 |
+
+**RELIANCE.NS — real Marketaux news (sparse free tier):** news gave no lift (numeric-only DirAcc
+0.543 vs cross 0.486 / co 0.457) — the main limiter is sparse Indian news coverage.
+
+### 3. PDF 1 — patch cross/co-attention, up/down classification (real AAPL news)
+
+| Model | Accuracy | MCC | F1 |
+| --- | --- | --- | --- |
+| **Patch Cross+Co-Attention (news)** | **0.534** | **0.123** | 0.691 |
+| Numeric-only (no news) | 0.521 | 0.007 | 0.679 |
+
+A small but real positive lift from news (MCC 0.01 → 0.12). The paper reports ~67–70% accuracy /
+MCC 0.29–0.35 on dense CMIN data with hierarchical-LLM summaries; our sparse free-tier news yields
+lower absolute numbers with the architecture reproduced faithfully.
+
+### 4. Hyperparameter tuning — Optuna (real AAPL news)
+
+| Config | RMSE | DirAcc | R² |
+| --- | --- | --- | --- |
+| default | 0.0191 | 0.568 | −0.233 |
+| tuned (Optuna) | 0.0175 | 0.405 | −0.042 |
+
+Tuning lowers validation/test RMSE; directional accuracy is noisy on sparse real news.
+
+### Key findings
+
+- On **real** NSE options, the **DL volatility hybrid beats Black–Scholes for a single stock**
+  (RELIANCE) with a fatter smile, while **BS remains best for the liquid NIFTY index** — deep
+  learning helps where BS's constant-volatility assumption is most violated.
+- **News fusion architectures work** (cross / co / co+cross / patch co-attention) and give a
+  positive lift where real news coverage is adequate; the practical limiter is **sparse free-tier
+  news**, especially for Indian names.
+- Both **reference papers are reproduced faithfully**; the Shvimer sub-models underfit at our data
+  scale (the paper used ~1.5M options).
+
+> Educational experiments on real end-of-day data — not investment advice. See
+> [Current limitations](#current-limitations).
+
 ## Stock-specific option comparison
 
 Enter `SBIN`, `INFY`, `RELIANCE` or another supported NSE symbol on the homepage. **Generate forecast + option comparison** runs both tasks independently; **Compare options only** skips the slower stock forecast. Each option comparison trains Direct ANN, Residual ANN and Option LSTM, then compares them with Black-Scholes on identical held-out contracts. The page shows RMSE, MAE, R², premium and error graphs, a contract table and a CSV download.
