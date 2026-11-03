@@ -35,16 +35,89 @@ The dashboard accepts symbols such as `RELIANCE`, `TCS.NS` and `M&M`, adds `.NS`
 
 ## Option pricing experiment
 
-`train.py` generates synthetic European option contracts, adds volatility smile/skew and price noise, and compares four call pricing methods:
+`train.py` generates synthetic European option contracts, adds volatility smile/skew and price noise, and compares five call pricing methods:
 
 - Black-Scholes: the mathematical baseline using historical volatility.
 - Direct ANN: a feedforward network predicting the option price.
 - Residual ANN: predicts the difference between the synthetic price and Black-Scholes, then adds that correction to the baseline.
 - Option LSTM: combines simulated historical sequences and contract features.
+- DL-Vol Hybrid: a neural network predicts a contract-specific volatility, which is fed into Black-Scholes to price the option (see "Project objectives" below).
 
 Contracts are split 70%/15%/15% for training, validation and testing. Network targets are divided by strike before standardization and multiplied by strike after prediction, so scale-free inputs can represent different contract sizes. Metrics include RMSE, MAE and R², with breakdowns for out-of-the-money, at-the-money and in-the-money calls. Lower RMSE/MAE means less pricing error.
 
+### Project objectives
+
+The four project objectives map onto the code as follows:
+
+| # | Objective | Implementation |
+| --- | --- | --- |
+| 1 | Evaluate the classical Black–Scholes model against observed prices | `src/pricing.py` (BS price, Greeks, implied vol) evaluated with RMSE/MAE/R² and moneyness breakdowns in `train.py` and `src/stock_options.py`. |
+| 2 | Deep-learning dynamic volatility model, σ_DL = f_θ(X) | `VolatilityNet` in `model.py`, trained in `train.py` (`train_vol_hybrid`). A `volatility_metrics.csv` report compares σ_DL against the true market volatility. |
+| 3 | Hybrid model, C = BS(S, K, T, r, σ_DL) | `VolatilityNet.hybrid_price` + `black_scholes_call_torch` (a differentiable Black-Scholes) in `model.py`. The network is trained end-to-end through Black-Scholes, so it only needs the market price as a target, and it relaxes BS' constant-volatility assumption. Reported as "DL-Vol Hybrid". |
+| 4 | Residual learning, E = C_market − C_BS, C = C_BS + Ê | `ResidualOptionANN` in `model.py` (reported as "Residual ANN"). |
+
 These are simulated prices and histories, not observed market options. Strong synthetic results do not establish performance on real contracts. Live option chain downloading is not implemented. `HybridShvimerSubModel1` is an additional architecture defined in `model.py`; the training pipeline does not train it.
+
+## News + cross/co-attention experiments
+
+Two experiments fuse **news text** with **numerical data** using attention, then
+compare against numeric-only baselines. Both share the same building blocks
+(`src/news/` and `src/attention/`):
+
+- **News ingestion** (`src/news/providers.py`): pluggable live providers —
+  `finnhub` and `alphavantage` return historical, date-ranged company news (set
+  `FINNHUB_API_KEY` or `ALPHAVANTAGE_API_KEY`); `yfinance` needs no key but
+  returns only a few recent headlines. Failures degrade gracefully to "no news".
+- **Embeddings** (`src/news/embeddings.py`): pretrained **FinBERT**
+  (`ProsusAI/finbert`) sentence embeddings with on-disk caching, plus an offline
+  `hashing` fallback for tests / no-internet runs.
+- **Fusion** (`src/attention/`): a GRU encodes the numeric sequence into tokens,
+  then the modalities are fused by one of three mechanisms before an MLP head:
+  **cross-attention** (numeric tokens attend to news), **co-attention** (parallel
+  numeric↔news both ways), or **co+cross** (`cocross`: co-attention both ways,
+  then a cross-attention stage over the two co-attended streams). Each is
+  compared against a **numeric-only** baseline (no news).
+
+Task A — stock next-day return (`train_stock_news.py`):
+
+```powershell
+python train_stock_news.py --symbol RELIANCE.NS --epochs 40 --news-mode auto
+```
+
+Predicts the next day's log-return from a price-feature window fused with news.
+Compares numeric-only, cross-attention and co-attention by RMSE and directional
+accuracy. `--news-mode synthetic` (the offline default fallback) fabricates
+news correlated with the target so the pipeline runs without an API key;
+`--news-mode real` uses a live provider + FinBERT.
+
+Task B — option pricing with sentiment (`train_option_news.py`):
+
+```powershell
+python train_option_news.py --samples 6000 --epochs 40
+```
+
+Fuses news with the option contract features. Because synthetic options have no
+real news feed, this injects an **exogenous sentiment premium** into the traded
+price that the numeric features cannot see but the news can, so news-fused models
+can beat the numeric-only and Black-Scholes baselines.
+
+Hyperparameter tuning — Optuna (`tune_news.py`):
+
+```powershell
+python tune_news.py --task stock  --model co    --trials 25
+python tune_news.py --task option --model cross --trials 25
+```
+
+Runs a TPE search over architecture/optimiser hyperparameters (minimising
+validation loss), retrains the best configuration, and prints the held-out test
+metrics of the tuned model versus an untuned default.
+
+**Important caveats.** Live news APIs mostly return *recent* headlines, so
+training an attention model over years of history needs a keyed provider with
+historical depth (Finnhub/Alpha Vantage) — otherwise news coverage is sparse.
+The synthetic news modes generate signal *by construction* to validate the
+architecture and the comparison; they are demonstrations, not evidence that real
+news improves real forecasts.
 
 ## Files
 
@@ -52,13 +125,18 @@ These are simulated prices and histories, not observed market options. Strong sy
 | --- | --- |
 | `app.py`, `templates/index.html` | Flask API and stock dashboard |
 | `model_final.ipynb` | Separate stock forecasting notebook |
-| `model.py` | PyTorch ANN, residual ANN, LSTM and hybrid architectures |
+| `model.py` | PyTorch architectures: direct ANN, residual ANN, LSTM, `VolatilityNet` (σ_DL), and a differentiable Black-Scholes (`black_scholes_call_torch`) for the hybrid pricer |
 | `src/stock_options.py` | Stock-calibrated simulation, observed CSV validation, chronological comparison and training |
 | `static/stock_options.js` | Stock-specific option tables, graphs and prediction downloads |
 | `train.py` | Synthetic option training, evaluation and artifact saving |
 | `src/pricing.py` | Black-Scholes call/put prices, Greeks, implied volatility |
 | `src/data_loader.py` | Synthetic contracts and simulated price sequences |
 | `deep_learning_option_models.ipynb` | Runs the option pricing experiment |
+| `src/news/` | News providers, FinBERT/hashing embeddings, date-alignment and synthetic news |
+| `src/attention/` | Cross-attention & co-attention modules, fusion models, shared trainer |
+| `train_stock_news.py` | Task A: stock-return prediction with news cross/co-attention |
+| `train_option_news.py` | Task B: option pricing with news cross/co-attention |
+| `tune_news.py` | Optuna hyperparameter tuning for the fusion models |
 | `tests/` | Formula, API, regression and short training checks |
 | `outputs/` | Locally generated metrics, weights and plots (not committed) |
 

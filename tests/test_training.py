@@ -15,11 +15,11 @@ class TrainingSmokeTests(unittest.TestCase):
         torch.set_num_threads(2)
         with tempfile.TemporaryDirectory() as output:
             overall, _ = run_pipeline(n_samples=100, epochs=1, batch_size=32, output_dir=output)
-            self.assertEqual(len(overall), 4)
+            self.assertEqual(len(overall), 5)
             self.assertTrue(np.isfinite(overall[['RMSE', 'MAE', 'R2']]).all().all())
             saved = joblib.load(Path(output) / 'preprocessing.joblib')
             self.assertEqual(saved['target_normalization'], 'divide_by_strike')
-            for name in ['ann_direct.pth', 'ann_resid.pth', 'lstm_model.pth', 'overall_metrics.csv', 'loss_curves.png', 'overall_comparison.png', 'moneyness_comparison.png']:
+            for name in ['ann_direct.pth', 'ann_resid.pth', 'lstm_model.pth', 'vol_model.pth', 'overall_metrics.csv', 'volatility_metrics.csv', 'loss_curves.png', 'overall_comparison.png', 'moneyness_comparison.png']:
                 self.assertTrue((Path(output) / name).exists())
 
     def test_stock_engine_with_local_prices(self):

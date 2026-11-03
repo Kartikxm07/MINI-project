@@ -5,7 +5,12 @@ Includes:
 2. ResidualOptionANN: Dedicated network learning the Black-Scholes error E = C_market - C_bs.
 3. OptionLSTM: Sequence-aware LSTM combining historical price dynamics with contract features.
 4. HybridShvimerSubModel1: Exact architecture from Shvimer & Zhu (2024) research paper.
+5. VolatilityNet: Deep-learning dynamic volatility model sigma_DL = f_theta(X) (Objective 2),
+   combined with a differentiable Black-Scholes to form the Hybrid pricer
+   C_hybrid = BS(S, K, T, r, sigma_DL) (Objective 3).
 """
+
+import math
 
 import torch
 import torch.nn as nn
@@ -147,3 +152,81 @@ class HybridShvimerSubModel1(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.net(x)
+
+
+def black_scholes_call_torch(S, K, T, r, sigma, eps_T: float = 1e-6, eps_sigma: float = 1e-6):
+    """
+    Differentiable Black-Scholes European call price in PyTorch.
+
+    Mirrors ``src.pricing.black_scholes_call`` but keeps the full autograd graph,
+    so gradients can flow back into a *predicted* volatility. This is what lets
+    VolatilityNet be trained end-to-end on observed/market prices (the hybrid
+    model of Objective 3). The standard normal CDF is evaluated with ``torch.erf``:
+        N(x) = 0.5 * (1 + erf(x / sqrt(2)))
+    All inputs broadcast and may be scalars or tensors.
+    """
+    S = torch.clamp(S, min=1e-8)
+    K = torch.clamp(K, min=1e-8)
+    T = torch.clamp(T, min=eps_T)
+    sigma = torch.clamp(sigma, min=eps_sigma)
+
+    sqrt_T = torch.sqrt(T)
+    d1 = (torch.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * sqrt_T)
+    d2 = d1 - sigma * sqrt_T
+    inv_sqrt2 = 1.0 / math.sqrt(2.0)
+    n_d1 = 0.5 * (1.0 + torch.erf(d1 * inv_sqrt2))
+    n_d2 = 0.5 * (1.0 + torch.erf(d2 * inv_sqrt2))
+    price = S * n_d1 - K * torch.exp(-r * T) * n_d2
+    # European call can never be worth less than its discounted intrinsic value.
+    intrinsic = torch.clamp(S - K * torch.exp(-r * T), min=0.0)
+    return torch.maximum(price, intrinsic)
+
+
+class VolatilityNet(nn.Module):
+    """
+    Deep-Learning Dynamic Volatility Model (Objective 2): sigma_DL = f_theta(X).
+
+    Estimates a contract-specific volatility from historical/market features X
+    (e.g. [S/K, T, r, sigma_hist]) instead of assuming the single constant
+    volatility of classical Black-Scholes. The raw network output is squashed
+    into a strictly positive, bounded range so Black-Scholes stays well defined:
+
+        sigma_DL = sigma_min + (sigma_max - sigma_min) * sigmoid(raw_output)
+
+    Paired with ``black_scholes_call_torch`` via :meth:`hybrid_price`, it forms
+    the Hybrid pricer (Objective 3):
+
+        C_hybrid = BS(S, K, T, r, sigma_DL)
+
+    which relaxes Black-Scholes' constant-volatility assumption while keeping the
+    interpretable, no-arbitrage structure of the closed-form formula.
+    """
+    def __init__(self, input_dim: int = 4, hidden_dim1: int = 64, hidden_dim2: int = 32,
+                 sigma_min: float = 0.01, sigma_max: float = 1.5):
+        super().__init__()
+        if not (0.0 <= sigma_min < sigma_max):
+            raise ValueError("Require 0 <= sigma_min < sigma_max")
+        self.sigma_min = float(sigma_min)
+        self.sigma_max = float(sigma_max)
+        self.network = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim1),
+            nn.ReLU(),
+            nn.Linear(hidden_dim1, hidden_dim2),
+            nn.ReLU(),
+            nn.Linear(hidden_dim2, 1),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Returns the predicted volatility sigma_DL, shape (batch, 1)."""
+        raw = self.network(x)
+        return self.sigma_min + (self.sigma_max - self.sigma_min) * torch.sigmoid(raw)
+
+    def hybrid_price(self, x: torch.Tensor, S: torch.Tensor, K: torch.Tensor,
+                     T: torch.Tensor, r: torch.Tensor) -> torch.Tensor:
+        """
+        Objective 3 forward pass: predict sigma_DL from x, then price the contract
+        with differentiable Black-Scholes. Returns the hybrid call price, shape (batch,).
+        S, K, T, r are the *raw* (unscaled) contract parameters.
+        """
+        sigma = self.forward(x).squeeze(-1)
+        return black_scholes_call_torch(S, K, T, r, sigma)
