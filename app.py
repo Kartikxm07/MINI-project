@@ -10,10 +10,14 @@ import os
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
+BASE_DIR = Path(__file__).parent
+DIST_DIR = BASE_DIR / 'frontend' / 'dist'
+
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 2 * 1024 * 1024
 app.config['STOCK_OPTION_EPOCHS'] = 25
-app.config['OPTION_RESULTS_DIR'] = str(Path(__file__).parent / 'outputs' / 'comparison')
+app.config['OPTION_RESULTS_DIR'] = str(BASE_DIR / 'outputs' / 'comparison')
+app.config['NEWS_RESULTS_DIR'] = str(BASE_DIR / 'outputs' / 'news_stock_live')
 OPTION_CHARTS = {
     'overall_comparison.png': ('Overall pricing error', 'Compare RMSE and MAE on the same held-out contracts. Lower bars mean smaller errors.'),
     'actual_vs_predicted.png': ('Predicted vs. actual prices', 'Points closer to the dashed diagonal are more accurate. All four methods use the same test contracts.'),
@@ -350,6 +354,181 @@ def stock_options():
 @app.errorhandler(413)
 def upload_too_large(error):
     return jsonify(error='The option CSV must be smaller than 2 MB.'), 413
+
+
+# ─── News API ────────────────────────────────────────────────────────────────
+
+# Lightweight finance headline lexicon for fast, offline sentiment scoring.
+# The deep attention models (see /api/news/benchmark) are the research result;
+# this heuristic just gives the live feed a readable tone per headline.
+_POS_WORDS = {
+    'surge', 'surges', 'surged', 'jump', 'jumps', 'jumped', 'rise', 'rises', 'rose',
+    'gain', 'gains', 'gained', 'rally', 'rallies', 'rallied', 'beat', 'beats', 'profit',
+    'profits', 'growth', 'grow', 'grows', 'record', 'high', 'highs', 'upgrade', 'upgraded',
+    'outperform', 'bullish', 'boost', 'boosts', 'strong', 'strength', 'win', 'wins',
+    'buy', 'soar', 'soars', 'soared', 'top', 'tops', 'approval', 'approved', 'dividend',
+    'expand', 'expands', 'expansion', 'positive', 'optimistic', 'recover', 'recovers',
+}
+_NEG_WORDS = {
+    'fall', 'falls', 'fell', 'drop', 'drops', 'dropped', 'plunge', 'plunges', 'plunged',
+    'slump', 'slumps', 'slumped', 'loss', 'losses', 'miss', 'misses', 'missed', 'cut',
+    'cuts', 'downgrade', 'downgraded', 'underperform', 'bearish', 'weak', 'weakness',
+    'sell', 'sinks', 'sink', 'crash', 'crashes', 'crashed', 'decline', 'declines',
+    'declined', 'warn', 'warns', 'warning', 'fraud', 'probe', 'lawsuit', 'fine', 'fined',
+    'slip', 'slips', 'slipped', 'low', 'lows', 'concern', 'concerns', 'risk', 'risks',
+    'negative', 'tumble', 'tumbles', 'tumbled', 'default', 'debt', 'layoff', 'layoffs',
+}
+_WORD_RE = re.compile(r"[a-z']+")
+
+
+def score_headline(text: str):
+    tokens = _WORD_RE.findall(text.lower())
+    pos = sum(1 for t in tokens if t in _POS_WORDS)
+    neg = sum(1 for t in tokens if t in _NEG_WORDS)
+    net = pos - neg
+    if net > 0:
+        label = 'positive'
+    elif net < 0:
+        label = 'negative'
+    else:
+        label = 'neutral'
+    return label, net
+
+
+# Cache news responses per symbol so a demo of several companies does not burn
+# the Marketaux free-tier quota (~100 requests/day). {symbol: (epoch, payload)}.
+_NEWS_CACHE = {}
+_NEWS_TTL = 15 * 60  # seconds
+# Keep each Marketaux lookup cheap: a few pages is plenty for a dashboard.
+_NEWS_MAX_PAGES = 3
+
+
+@app.route('/api/news', methods=['GET'])
+def api_news():
+    import time as _time
+    raw = (request.args.get('symbol') or '').strip()
+    if not raw:
+        return jsonify(error='Please enter a stock symbol.'), 400
+    try:
+        symbol = clean_symbol(raw)
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+
+    cached = _NEWS_CACHE.get(symbol)
+    if cached and (_time.time() - cached[0]) < _NEWS_TTL and not request.args.get('provider'):
+        return jsonify({**cached[1], 'cached': True})
+
+    from src.news import get_provider
+
+    # Build an ordered preference list. Marketaux covers NSE/BSE, so it leads for
+    # Indian tickers when its key is set; yfinance is the always-available fallback.
+    requested = (request.args.get('provider') or '').strip().lower()
+    if requested:
+        order = [requested]
+    else:
+        order = []
+        if os.environ.get('MARKETAUX_API_KEY'):
+            order.append('marketaux')
+        if os.environ.get('FINNHUB_API_KEY'):
+            order.append('finnhub')
+        if os.environ.get('ALPHAVANTAGE_API_KEY'):
+            order.append('alphavantage')
+        order.append('yfinance')
+
+    end = pd.Timestamp.today()
+    start = end - pd.Timedelta(days=30)
+    items, used = [], None
+    last_error = None
+    for name in order:
+        try:
+            provider = get_provider(name)
+            if hasattr(provider, 'max_pages'):
+                provider.max_pages = _NEWS_MAX_PAGES  # conserve API quota
+            fetched = provider.fetch(symbol, start, end)
+        except Exception as exc:  # bad key, unknown provider, transient outage
+            last_error = exc
+            continue
+        used = name
+        if fetched:
+            items = fetched
+            break
+    if used is None:
+        app.logger.warning('All news providers failed: %s', last_error)
+        return jsonify(error='Could not reach any news feed. Try again shortly.'), 502
+
+    scored = []
+    counts = {'positive': 0, 'neutral': 0, 'negative': 0}
+    net_total = 0
+    for it in items:
+        label, net = score_headline(it.headline)
+        counts[label] += 1
+        net_total += net
+        scored.append({
+            'date': it.date.isoformat() if hasattr(it.date, 'isoformat') else str(it.date),
+            'headline': it.headline,
+            'source': it.source,
+            'sentiment': label,
+            'score': net,
+        })
+    scored.sort(key=lambda r: r['date'], reverse=True)
+    n = len(scored)
+    payload = {
+        'symbol': symbol,
+        'provider': used,
+        'count': n,
+        'summary': {
+            **counts,
+            'net': net_total,
+            'avg': round(net_total / n, 3) if n else 0,
+            'bias': 'positive' if net_total > 0 else 'negative' if net_total < 0 else 'neutral',
+        },
+        'items': scored,
+    }
+    # Only cache non-empty results, so a transient miss can be retried.
+    if n:
+        _NEWS_CACHE[symbol] = (_time.time(), payload)
+    return jsonify({**payload, 'cached': False})
+
+
+@app.route('/api/news/benchmark', methods=['GET'])
+def api_news_benchmark():
+    path = Path(app.config['NEWS_RESULTS_DIR']) / 'stock_news_metrics.csv'
+    if not path.exists():
+        return jsonify(models=[], chart=False)
+    df = pd.read_csv(path)
+    records = []
+    for row in df.to_dict('records'):
+        rec = {}
+        for k, v in row.items():
+            if isinstance(v, float) and not np.isfinite(v):
+                rec[k] = None
+            elif isinstance(v, float):
+                rec[k] = round(v, 5)
+            else:
+                rec[k] = v
+        records.append(rec)
+    chart_exists = (Path(app.config['NEWS_RESULTS_DIR']) / 'stock_news_comparison.png').is_file()
+    return jsonify(models=records, chart=chart_exists)
+
+
+@app.route('/api/news/chart')
+def api_news_chart():
+    return send_from_directory(app.config['NEWS_RESULTS_DIR'],
+                               'stock_news_comparison.png', max_age=0)
+
+
+# ─── Single-page app (production build) ───────────────────────────────────────
+
+@app.route('/app', defaults={'path': ''})
+@app.route('/app/<path:path>')
+def spa(path):
+    """Serve the built Vite SPA. In dev, use the Vite server instead."""
+    if not DIST_DIR.is_file() and not DIST_DIR.exists():
+        return jsonify(error='Frontend not built. Run "npm run build" in frontend/.'), 404
+    target = DIST_DIR / path
+    if path and target.is_file():
+        return send_from_directory(str(DIST_DIR), path, max_age=0)
+    return send_from_directory(str(DIST_DIR), 'index.html', max_age=0)
 
 
 if __name__ == '__main__':
