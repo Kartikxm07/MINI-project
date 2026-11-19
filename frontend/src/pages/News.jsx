@@ -113,6 +113,29 @@ export default function News() {
               research result — they learn sentiment end-to-end.
             </p>
           </div>
+
+          {feed.drivers && (feed.drivers.positive.length > 0 || feed.drivers.negative.length > 0) && (
+            <div className="panel">
+              <h3>What's driving the sentiment</h3>
+              <div className="drivers">
+                <div>
+                  <h4 className="pos">Top positive</h4>
+                  {feed.drivers.positive.length
+                    ? <ul className="news-list">{feed.drivers.positive.map((it, i) => (
+                        <li key={i} className="news-item"><span className="tag pos">+{it.score}</span><div className="news-body"><p className="news-head">{it.headline}</p><span className="muted small">{it.date}</span></div></li>))}</ul>
+                    : <Empty message="No clearly positive headlines." />}
+                </div>
+                <div>
+                  <h4 className="neg">Top negative</h4>
+                  {feed.drivers.negative.length
+                    ? <ul className="news-list">{feed.drivers.negative.map((it, i) => (
+                        <li key={i} className="news-item"><span className="tag neg">{it.score}</span><div className="news-body"><p className="news-head">{it.headline}</p><span className="muted small">{it.date}</span></div></li>))}</ul>
+                    : <Empty message="No clearly negative headlines." />}
+                </div>
+              </div>
+              <p className="caption">Headlines with the strongest positive / negative keyword signal in this window — the factors pushing the net bias.</p>
+            </div>
+          )}
         </div>
       )}
 

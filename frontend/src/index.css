@@ -183,6 +183,12 @@ body {
 .tag.neu { color: var(--muted); background: rgba(148, 163, 184, .12); }
 .bench-chart { width: 100%; border-radius: 10px; margin-top: 16px; border: 1px solid var(--border); }
 
+.drivers { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.drivers h4 { margin: 0 0 10px; font-size: .85rem; text-transform: uppercase; letter-spacing: .5px; }
+.drivers h4.pos { color: var(--green); }
+.drivers h4.neg { color: var(--red); }
+@media (max-width: 640px) { .drivers { grid-template-columns: 1fr; } }
+
 .news-ticker { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 20px; }
 .ticker-item { display: inline-flex; align-items: center; gap: 8px; margin: 0 28px; font-size: .9rem; color: var(--text); white-space: nowrap; }
 .ticker-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }

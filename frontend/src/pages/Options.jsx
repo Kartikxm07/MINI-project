@@ -134,6 +134,22 @@ export default function Options() {
             </table>
           </div>
 
+          {data.factor_importance && (
+            <div className="panel">
+              <h3>Which factors drive the pricing <span className="muted">· Direct ANN, permutation importance</span></h3>
+              <ResponsiveContainer width="100%" height={250}>
+                <BarChart data={data.factor_importance} layout="vertical" margin={{ top: 8, right: 36, bottom: 4, left: 16 }}>
+                  <CartesianGrid stroke="var(--grid)" strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" unit="%" tick={{ fill: 'var(--muted)', fontSize: 11 }} />
+                  <YAxis type="category" dataKey="factor" width={120} tick={{ fill: 'var(--muted)', fontSize: 12 }} />
+                  <Tooltip formatter={(v) => `${v}%`} contentStyle={{ background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text)' }} />
+                  <Bar dataKey="importance" name="Importance" fill="#a78bfa" radius={[0, 4, 4, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+              <p className="caption">Each input factor is shuffled on the test contracts; the resulting rise in pricing error shows how much the model leans on it.</p>
+            </div>
+          )}
+
           {curveData && curveData.names.length > 0 && (
             <div className="panel">
               <h3>Validation loss curves</h3>

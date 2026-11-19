@@ -90,8 +90,11 @@ def run_prediction(symbol: str):
     tf.get_logger().setLevel('ERROR')
 
     ticker = yf.Ticker(symbol)
-    df = yf.download(symbol, start="2021-01-01",
-                     end=pd.Timestamp.today().strftime('%Y-%m-%d'), progress=False)
+    # yfinance treats `end` as exclusive, so end=today drops today's bar and
+    # leaves the forecast a trading day behind. Use tomorrow to include the most
+    # recent available session (today's close once Yahoo posts it).
+    end = (pd.Timestamp.today() + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
+    df = yf.download(symbol, start="2021-01-01", end=end, progress=False)
 
     if df.empty or len(df) < 120:
         raise ValueError(f"Not enough data for {symbol}. Try a different stock.")
@@ -166,6 +169,21 @@ def run_prediction(symbol: str):
     best_pred_s = lstm_pred_s if best_name == 'LSTM' else gru_pred_s
 
     best_real = inverse_pred(best_pred_s, scaler)
+
+    # Explainability: permutation feature importance over the OHLCV inputs. Each
+    # channel is shuffled across the test sequences and the RMSE increase measured.
+    feat_names = ['Open', 'High', 'Low', 'Close', 'Volume']
+    base_rmse_fi = float(np.sqrt(mean_squared_error(y_test, best_pred_s)))
+    rng_fi = np.random.default_rng(42)
+    raw_fi = []
+    for j in range(X_test.shape[2]):
+        xp = X_test.copy()
+        xp[:, :, j] = X_test[rng_fi.permutation(len(X_test)), :, j]
+        rmse_j = float(np.sqrt(mean_squared_error(y_test, best_model.predict(xp, verbose=0))))
+        raw_fi.append(max(rmse_j - base_rmse_fi, 0.0))
+    total_fi = sum(raw_fi) or 1.0
+    feature_importance = [{'feature': n, 'importance': round(100 * v / total_fi, 1)}
+                          for n, v in sorted(zip(feat_names, raw_fi), key=lambda t: -t[1])]
 
     dummy_y = np.zeros((len(y_test), 5))
     dummy_y[:, 0] = y_test[:, 0]
@@ -262,6 +280,8 @@ def run_prediction(symbol: str):
         "test_dates":    test_dates,
         "actual_close":  actual_close,
         "pred_close":    pred_close,
+        # Explainability
+        "feature_importance": feature_importance,
     }
 
 
@@ -338,7 +358,7 @@ def stock_options():
             end = (contracts.date.max() + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
         else:
             start = (pd.Timestamp.today() - pd.Timedelta(days=3 * 365)).strftime('%Y-%m-%d')
-            end = pd.Timestamp.today().strftime('%Y-%m-%d')
+            end = (pd.Timestamp.today() + pd.Timedelta(days=1)).strftime('%Y-%m-%d')  # end is exclusive
         history = yf.download(symbol, start=start, end=end, auto_adjust=True,
                               progress=False, threads=False)
         result = compare_stock_options(symbol, history, rate, dividend, contracts,
@@ -481,6 +501,11 @@ def api_news():
             'net': net_total,
             'avg': round(net_total / n, 3) if n else 0,
             'bias': 'positive' if net_total > 0 else 'negative' if net_total < 0 else 'neutral',
+        },
+        # Explainability: which headlines push sentiment most in each direction.
+        'drivers': {
+            'positive': sorted([r for r in scored if r['score'] > 0], key=lambda r: -r['score'])[:3],
+            'negative': sorted([r for r in scored if r['score'] < 0], key=lambda r: r['score'])[:3],
         },
         'items': scored,
     }

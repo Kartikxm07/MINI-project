@@ -1,0 +1,7 @@
+# Treat binary deliverables as binary (no EOL conversion, no text diff)
+*.pdf   binary
+*.pptx  binary
+*.png   binary
+*.jpg   binary
+*.joblib binary
+*.pth   binary

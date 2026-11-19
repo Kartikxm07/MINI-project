@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import {
-  ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+  ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
 } from 'recharts'
 import { predictStock } from '../api.js'
 import { Spinner, ErrorBox } from '../components/Status.jsx'
@@ -126,6 +126,22 @@ export default function Stock() {
               Model error — LSTM RMSE {data.lstm_rmse} · GRU RMSE {data.gru_rmse} (scaled units).
             </p>
           </div>
+
+          {data.feature_importance && (
+            <div className="panel">
+              <h3>What drove this forecast <span className="muted">· permutation importance</span></h3>
+              <ResponsiveContainer width="100%" height={230}>
+                <BarChart data={data.feature_importance} layout="vertical" margin={{ top: 8, right: 36, bottom: 4, left: 16 }}>
+                  <CartesianGrid stroke="var(--grid)" strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" unit="%" tick={{ fill: 'var(--muted)', fontSize: 11 }} />
+                  <YAxis type="category" dataKey="feature" width={64} tick={{ fill: 'var(--muted)', fontSize: 12 }} />
+                  <Tooltip formatter={(v) => `${v}%`} contentStyle={{ background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text)' }} />
+                  <Bar dataKey="importance" name="Importance" fill="#38bdf8" radius={[0, 4, 4, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+              <p className="caption">How much the model's test error rises when each input is shuffled — higher means the forecast relies on that factor more.</p>
+            </div>
+          )}
 
           <div className="panel">
             <h3>Fundamentals</h3>

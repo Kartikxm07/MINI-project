@@ -227,8 +227,33 @@ def compare_stock_options(symbol, history, rate=.05, dividend=.0, contracts=None
         part = frame.iloc[indices]
         split[name] = dict(rows=len(part), dates=int(part.date.nunique()),
                            start=part.date.min().strftime('%Y-%m-%d'), end=part.date.max().strftime('%Y-%m-%d'))
+    # Explainability: permutation factor importance for the Direct ANN. Each input
+    # factor is shuffled on the test set and the RMSE increase measured — a larger
+    # increase means the model relies on that factor more to price the option.
+    factor_names = ['Moneyness (S/K)', 'Time to expiry', 'Risk-free rate', 'Dividend yield', 'Volatility']
+    strike_te = frame.strike.to_numpy()[te]
+    target_te = frame.target.to_numpy()[te]
+    with torch.no_grad():
+        x_te = x[te].clone()
+
+        def _direct_rmse(mat):
+            pred = yscale.inverse_transform(direct(mat).numpy()).ravel() * strike_te
+            return float(np.sqrt(mean_squared_error(target_te, pred)))
+
+        base_rmse = _direct_rmse(x_te)
+        rng = np.random.default_rng(42)
+        raw = []
+        for j in range(x_te.shape[1]):
+            perm = x_te.clone()
+            perm[:, j] = perm[torch.as_tensor(rng.permutation(len(perm))), j]
+            raw.append(max(_direct_rmse(perm) - base_rmse, 0.0))
+    total = sum(raw) or 1.0
+    factor_importance = [dict(factor=n, importance=round(100 * v / total, 1), rmse_increase=round(v, 4))
+                         for n, v in sorted(zip(factor_names, raw), key=lambda t: -t[1])]
+
     return dict(symbol=symbol, mode='observed' if contracts is not None else 'simulation',
                 source='User-uploaded closing call premiums' if contracts is not None else 'Stock-history-calibrated simulation',
                 history_start=close.index[0].strftime('%Y-%m-%d'), history_end=close.index[-1].strftime('%Y-%m-%d'),
                 rate=rate, dividend=dividend, metrics=metrics, contracts=records, split=split,
-                curves=curves, simulation_paths=1024 if contracts is None else None)
+                curves=curves, factor_importance=factor_importance,
+                simulation_paths=1024 if contracts is None else None)
